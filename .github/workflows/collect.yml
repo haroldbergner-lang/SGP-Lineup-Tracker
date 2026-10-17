@@ -52,6 +52,7 @@ jobs:
         with:
           python-version: '3.13'
       - name: Restore cloud data and run collection
+        id: collect_data
         timeout-minutes: 355
         run: |
           if [ "$CLOUD_MODE" = "collect" ]; then
@@ -60,13 +61,13 @@ jobs:
             python -m src.cloud --restore-only
           fi
       - name: Prepare encrypted recovery artifact
-        if: always()
+        if: always() && steps.collect_data.outputs.keep_archive == 'true'
         run: |
           if [ -d data/season-2026 ]; then
             python -m src.cloud_storage data/season-2026 output/season-2026.enc
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
+        if: always() && steps.collect_data.outputs.keep_archive == 'true'
         with:
           name: encrypted-season-checkpoint
           path: output/season-2026.enc
