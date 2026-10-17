@@ -1,7 +1,12 @@
-"""Generate candidate pairs; only a verified FanDuel quote proves support."""
+"""Same-team candidates for lineup research; a valid quote proves support."""
 from itertools import combinations
 
 
 def candidate_pairs(selections):
-    # Include same-player and opposing-team pairs; let FanDuel determine support.
-    return combinations(selections, 2)
+    for first, second in combinations(selections, 2):
+        # Missing team identity is not evidence that two players share a team.
+        if not first.get('team') or first['team'] != second.get('team'):
+            continue
+        if first['prop'] == second['prop'] == '1+ hit':
+            continue
+        yield first, second

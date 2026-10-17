@@ -54,7 +54,14 @@ class Quotes(unittest.TestCase):
                          {'marketId': '1.2', 'selectionId': 20})
 
     def test_unordered_pairs(self):
-        self.assertEqual(len(list(candidate_pairs([1, 2, 3, 4]))), 6)
+        legs = [{'team': 'rays', 'prop': p} for p in ['1+ hit', '1+ hit', '1+ run', '1+ RBI']]
+        self.assertEqual(len(list(candidate_pairs(legs))), 5)
+
+    def test_opponents_and_unknown_teams_excluded(self):
+        legs = [{'team': 'rays', 'prop': '1+ run'},
+                {'team': 'guardians', 'prop': '1+ RBI'},
+                {'team': '', 'prop': '2+ total bases'}]
+        self.assertEqual(list(candidate_pairs(legs)), [])
 
     def test_market_filter(self):
         market = {'eventId': 100, 'sgmMarket': True, 'marketStatus': 'OPEN',

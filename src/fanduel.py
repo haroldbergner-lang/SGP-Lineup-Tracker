@@ -7,7 +7,7 @@ import math
 import os
 import re
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 MARKETS = {
@@ -33,10 +33,13 @@ def selections(data, event_id):
             sid = runner.get('selectionId')
             if sid is None:
                 continue
+            logo = urlparse(runner.get('secondaryLogo', ''))
+            team_match = re.search(r'/team/mlb/([a-z_]+)\.png$', logo.path)
+            team = (team_match[1] if team_match and logo.hostname == 'assets.sportsbook.fanduel.com' else '')
             key = (str(mid), str(sid))
             result[key] = {
                 'market_id': str(mid), 'selection_id': str(sid),
-                'player': runner['runnerName'], 'prop': prop,
+                'player': runner['runnerName'], 'prop': prop, 'team': team,
                 # Selection IDs are not asserted to be MLB or FanDuel player IDs.
                 'player_id': runner.get('playerId', ''),
                 'handicap': runner.get('handicap'),

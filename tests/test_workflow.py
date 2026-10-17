@@ -70,11 +70,15 @@ class FakeFD:
         return {'attachments': {'events': {'500': {'name': 'Tampa Bay Rays @ Cleveland Guardians', 'openDate': self.start}}}}
 
     def markets(self, eid):
-        return {'attachments': {'markets': {'1.1': {
-            'eventId': 500, 'sgmMarket': True, 'marketStatus': 'OPEN',
-            'marketType': 'PLAYER_TO_RECORD_A_HIT', 'runners': [
-                {'selectionId': i+1, 'runnerName': f'visit Player {i}',
-                 'runnerStatus': 'ACTIVE', 'isPlayerSelection': True} for i in range(3)]}}}}
+        markets = {}
+        for i in range(3):
+            markets[f'1.{i}'] = {
+                'eventId': 500, 'sgmMarket': True, 'marketStatus': 'OPEN',
+                'marketType': 'PLAYER_TO_RECORD_A_HIT' if i == 0 else 'TO_RECORD_A_RUN',
+                'runners': [{'selectionId': i+1, 'runnerName': f'visit Player {i}',
+                             'secondaryLogo': 'https://assets.sportsbook.fanduel.com/images/team/mlb/tampa_bay_rays.png',
+                             'runnerStatus': 'ACTIVE', 'isPlayerSelection': True}]}
+        return {'attachments': {'markets': markets}}
 
     def quote(self, pair):
         self.quoted.append(tuple((s['market_id'], s['selection_id']) for s in pair))

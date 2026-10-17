@@ -86,7 +86,7 @@ def export_all(root):
                    'projection_retrieved_at': state.get('baseline_observed_at', ''),
                    'baseline_already_confirmed': '|'.join(state.get('baseline_already_confirmed', []))}
             for number, leg in enumerate(pair, 1):
-                for key in ('player', 'prop', 'market_id', 'selection_id', 'player_id', 'handicap', 'individual_odds'):
+                for key in ('player', 'prop', 'team', 'market_id', 'selection_id', 'player_id', 'handicap', 'individual_odds'):
                     row[f'{key}_{number}'] = leg.get(key, '')
                 for key, value in player_fields(leg, state).items():
                     row[f'{key}_{number}'] = value

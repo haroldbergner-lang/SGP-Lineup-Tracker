@@ -226,6 +226,8 @@ class Collector:
         if not legs:
             raise ValueError('No eligible MLB selections available at baseline')
         pairs = list(candidate_pairs(legs))
+        if not pairs:
+            raise ValueError('No same-team candidates with known team identity')
         random.Random(game['gamePk']).shuffle(pairs)
         manifest = {'game_id': game['gamePk'], 'fd_event_id': eid,
                     'scheduled_start': game['gameDate'], 'created_at': stamp(),
