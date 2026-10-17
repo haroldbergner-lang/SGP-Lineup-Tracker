@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+output/
+data/
+.DS_Store
+
+collector.local.json
+
+.cloud-archive-key

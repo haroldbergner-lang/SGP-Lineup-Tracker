@@ -1,0 +1,75 @@
+name: Cloud lineup collection
+on:
+  schedule:
+    - cron: '7 * * * *'
+  push:
+    branches: [feat/mlb-sgp-csv]
+    paths:
+      - '.github/workflows/collect.yml'
+      - 'src/cloud.py'
+      - 'src/cloud_storage.py'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Check archive recovery or collect a due game'
+        type: choice
+        options: [storage-check, collect]
+        default: storage-check
+permissions:
+  contents: read
+concurrency:
+  group: sgp-cloud-collector
+  cancel-in-progress: false
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - run: python -m unittest discover -s tests -v
+  collect:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FD_API_KEY: ${{ secrets.FD_API_KEY }}
+      SGP_ARCHIVE_PASSWORD: ${{ secrets.SGP_ARCHIVE_PASSWORD }}
+      CLOUD_MODE: ${{ github.event_name == 'schedule' && 'collect' || inputs.mode || 'storage-check' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - name: Restore cloud data and run collection
+        timeout-minutes: 355
+        run: |
+          if [ "$CLOUD_MODE" = "collect" ]; then
+            python -m src.cloud
+          else
+            python -m src.cloud --restore-only
+          fi
+      - name: Prepare encrypted recovery artifact
+        if: always()
+        run: |
+          if [ -d data/season-2026 ]; then
+            python -m src.cloud_storage data/season-2026 output/season-2026.enc
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: encrypted-season-checkpoint
+          path: output/season-2026.enc
+          if-no-files-found: warn
+          retention-days: 90
+
