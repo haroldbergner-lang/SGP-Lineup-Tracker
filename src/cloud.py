@@ -33,13 +33,18 @@ def main():
         gh(['workflow', 'disable', 'collect.yml'])
         print('Collection window ended; cloud schedule disabled.')
         return 0
-    root = download(Path('data'))
-    # Do not carry a local-machine process identity into cloud execution.
-    (root/'process.json').unlink(missing_ok=True)
+    def keep_archive():
+        if os.environ.get('GITHUB_OUTPUT'):
+            with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+                stream.write('keep_archive=true\n')
     if args.restore_only:
+        root = download(Path('data'))
+        (root/'process.json').unlink(missing_ok=True)
+        keep_archive()
         publish(root)
         print('Encrypted cloud archive restored, authenticated, and saved back to GitHub.')
         return 0
+    root = Path('data/season-2026')
     config = {'state': 'nj', 'frontend_key': os.environ['FD_API_KEY'],
               'start_date': '2026-10-17', 'end_date': '2026-11-01', 'output': str(root)}
     collector = Collector(config)
@@ -49,6 +54,10 @@ def main():
     if not games:
         print('No game requires collection in this window.')
         return 0
+    # Avoid downloading or archiving growing datasets on idle hourly checks.
+    root = download(Path('data'))
+    (root/'process.json').unlink(missing_ok=True)
+    keep_archive()
     ids = {g['gamePk'] for g in games}
     original_refresh = collector.refresh_schedule
     def refresh():
