@@ -137,6 +137,7 @@ class Workflow(unittest.TestCase):
                     collector.process_game(game, current)
                 for future in collector.jobs.values():
                     future.result(timeout=5)
+                self.assertEqual(len(list((Path(directory)/'100/boxscores').glob('*.json'))), 2)
                 count = len(collector.fd.quoted)
                 self.assertEqual(count, 10)  # two pairs across baseline and four follow-ups
                 # A resumed finished snapshot never duplicates the existing rows or quotes.
@@ -150,6 +151,25 @@ class Workflow(unittest.TestCase):
                 self.assertEqual(rows[0]['primary_after_stage'], 'away_plus10')
                 self.assertEqual(len(json.loads(rows[0]['away_projected_lineup'])), 9)
                 self.assertEqual(len(json.loads(rows[0]['home_actual_lineup'])), 9)
+            collector.pool.shutdown(wait=True)
+
+    def test_fast_polling_until_both_lineups_are_detected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            collector = Collector({'output': directory, 'frontend_key': 'test-public-key'})
+            now = datetime.now(timezone.utc)
+            start = now + timedelta(hours=4)
+            collector.schedule = [{'gamePk': 100, 'gameDate': start.isoformat(),
+                                   'status': {'detailedState': 'Scheduled'}}]
+            path = Path(directory)/'100/state.json'
+            self.assertEqual(collector.poll_interval(start - timedelta(hours=6)), 30)
+            self.assertEqual(collector.poll_interval(now), 5)
+            save(path, {'confirmed': {'away': {'detected_at': stamp()}}})
+            self.assertEqual(collector.poll_interval(now), 5)
+            save(path, {'confirmed': {'away': {}, 'home': {}}})
+            self.assertEqual(collector.poll_interval(now), 30)
+            self.assertEqual(collector.poll_interval(start + timedelta(seconds=1)), 30)
+            collector.schedule[0]['status']['detailedState'] = 'Postponed'
+            self.assertEqual(collector.poll_interval(now), 30)
             collector.pool.shutdown(wait=True)
 
     def test_projections_survive_market_discovery_failure(self):

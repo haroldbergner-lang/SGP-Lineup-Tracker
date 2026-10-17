@@ -267,15 +267,17 @@ class Collector:
         self.launch(manifest, state, 'baseline', baseline_due)
         try:
             box = get_json(f'https://statsapi.mlb.com/api/v1/game/{game["gamePk"]}/boxscore')
-            box_source = directory / 'boxscores' / (stamp().replace(':', '-') + '.json')
-            save(box_source, box)
+            digest = hashlib.sha256(json.dumps(box, sort_keys=True).encode()).hexdigest()
+            box_source = directory / 'boxscores' / (digest + '.json')
+            if not box_source.exists():
+                save(box_source, box)
         except Exception as error:
             self.error('official_lineup', error)
             box, box_source = {}, None
         for side in ('away', 'home'):
             actual = official_order(box, side)
             order = orders.get(side)
-            if not actual:
+            if not actual and box_source is not None:
                 state['last_unconfirmed'][side] = stamp()
             if actual:
                 corroborated = bool(order and order['status'] == 'confirmed' and
@@ -309,6 +311,21 @@ class Collector:
             self.launch(manifest, state, 'pregame', due.isoformat())
         save(directory / 'state.json', state)
 
+    def poll_interval(self, current=None):
+        """Fast discovery only in the pregame window until both orders appear."""
+        current = current or datetime.now(UTC)
+        for game in self.schedule:
+            start = dt(game['gameDate'])
+            status = game.get('status', {}).get('detailedState', '').lower()
+            if any(word in status for word in ('cancel', 'postpon')):
+                continue
+            if start - timedelta(hours=5) <= current < start:
+                path = self.root / str(game['gamePk']) / 'state.json'
+                state = json.loads(path.read_text()) if path.exists() else {}
+                if not all(side in state.get('confirmed', {}) for side in ('away', 'home')):
+                    return 5
+        return 30
+
     def tick(self):
         if time.monotonic() - self.last_schedule > 900 or not self.schedule:
             self.refresh_schedule()
@@ -326,6 +343,7 @@ class Collector:
                     self.error('snapshot_' + key[1], error)
                 del self.jobs[key]
         self.health.update(heartbeat_at=stamp(), running_batches=len(self.jobs),
+                           poll_interval_seconds=self.poll_interval(),
                            scheduled_games=len(self.schedule), next_games=[
                                {'game_id': g['gamePk'], 'start': g['gameDate']} for g in self.schedule
                                if dt(g['gameDate']) > current])
@@ -344,6 +362,7 @@ class Collector:
         deadline = datetime.fromisoformat(self.config['end_date']).replace(tzinfo=ET) + timedelta(days=1, hours=3)
         try:
             while datetime.now(UTC) < deadline:
+                tick_started = time.monotonic()
                 try:
                     self.tick()
                 except Exception as error:
@@ -352,7 +371,7 @@ class Collector:
                     save(self.root / 'health.json', self.health)
                 if once:
                     break
-                time.sleep(30)
+                time.sleep(max(.1, self.poll_interval() - (time.monotonic() - tick_started)))
         finally:
             self.pool.shutdown(wait=True)
             from .analysis import export_all
