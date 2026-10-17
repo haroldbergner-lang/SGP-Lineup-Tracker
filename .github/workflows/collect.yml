@@ -1,7 +1,7 @@
 name: Cloud lineup collection
 on:
   schedule:
-    - cron: '7 * * * *'
+    - cron: '11,26,41,56 * * * *'
   push:
     branches: [feat/mlb-sgp-csv]
     paths:
