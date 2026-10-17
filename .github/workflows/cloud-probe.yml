@@ -1,0 +1,25 @@
+name: Cloud access probe
+on:
+  push:
+    branches: [feat/mlb-sgp-csv]
+    paths:
+      - '.github/workflows/cloud-probe.yml'
+      - 'src/cloud_probe.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.13'
+      - name: Test source access and a real combined quote
+        env:
+          FD_API_KEY: ${{ secrets.FD_API_KEY }}
+          FD_STATE: nj
+        run: python -m src.cloud_probe
+
