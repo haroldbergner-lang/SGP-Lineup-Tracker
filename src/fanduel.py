@@ -11,10 +11,8 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 MARKETS = {
-    'PLAYER_TO_RECORD_A_HIT': '1+ hit',
     'TO_RECORD_A_RUN': '1+ run',
     'TO_RECORD_AN_RBI': '1+ RBI',
-    'TO_RECORD_2+_TOTAL_BASES': '2+ total bases',
 }
 
 

@@ -46,9 +46,8 @@ Each run creates `output/<UTC timestamp>-<run ID>/` containing:
 - `raw/`: source markets and quote responses for inspection. These may contain
   quote references; all collected data stays ignored by Git.
 
-All four requested prop types use explicit FanDuel market types: 1+ hit, 1+ run,
-1+ RBI, and 2+ total bases. No projected-order filter or surname matching is used.
-Pairs are restricted to the same team, with hit–hit excluded. Same-player mixed-prop pairs remain eligible; only a valid quote proves support.
+The active scope uses explicit FanDuel market types for 1+ run and 1+ RBI. No projected-order filter or surname matching is used.
+Pairs require one player to score 1+ run and a different teammate to record 1+ RBI; only a valid quote proves support.
 Team identity is read from FanDuel’s runner team-logo metadata; missing identity is excluded, never guessed.
 The default ten pairs are a diagnostic sample in stable ID order, not a representative sample.
 Use `--limit` to increase the batch after pricing validation. Requests are sequential,
@@ -100,8 +99,8 @@ sleep, source failure or network restriction can cause missed collection windows
 ### Per-game timing
 
 - **Baseline:** starts five hours before scheduled first pitch. Save RotoWire's
-  then-current *expected* orders and enumerate all unordered pairs from the four
-  eligible FanDuel market types. Preserve the manifest unchanged afterward.
+  then-current *expected* orders and enumerate all same-team, different-player
+  run–RBI combinations. Preserve both scorer/RBI-batter directions. Preserve the manifest unchanged afterward.
 - **Immediate:** check MLB every approximately 30 seconds during the collection
   window; when a complete nine-player battingOrder first appears for either team,
   start requoting that exact manifest. Capture both teams' announcements separately.
@@ -109,7 +108,7 @@ sleep, source failure or network restriction can cause missed collection windows
   detected order, regardless of whether the earlier sweep has finished.
 - **Pregame:** start a final sweep shortly before scheduled first pitch. Its lead
   is the larger of five minutes or the estimated full-batch duration plus 90 seconds.
-  In the saved sample, same-team/no-hit–hit filtering yields 1,188 candidates; at four starts per second the final sweep begins about six and a half minutes before first pitch. This is
+  In the saved sample, run–RBI-only filtering yields 144 candidates, taking at least 36 seconds at four starts per second. The final sweep starts five minutes before first pitch. This is
   a sweep, not one simultaneous instant. Overlapping jobs or network delays can
   extend it; no new requests start at/after scheduled first pitch.
 
@@ -162,4 +161,4 @@ atomically as data arrives; they are incomplete until the relevant games finish.
 
 ## Current research scope
 
-Same-team pairs only. Hit–hit pairs are excluded. The other nine prop-type pairings remain enabled. Same-player mixed-prop pairs remain included; no additional filters have been applied.
+Only 1+ run for player A plus 1+ RBI for a different player B on the same team. Both player directions remain included. All available players are eligible regardless of projected batting position; only verified FanDuel SGP quotes count as supported.

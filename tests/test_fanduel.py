@@ -53,15 +53,25 @@ class Quotes(unittest.TestCase):
         self.assertEqual(quote_body(PAIR)['betLegs'][1]['betRunners'][0]['runner'],
                          {'marketId': '1.2', 'selectionId': 20})
 
-    def test_unordered_pairs(self):
-        legs = [{'team': 'rays', 'prop': p} for p in ['1+ hit', '1+ hit', '1+ run', '1+ RBI']]
-        self.assertEqual(len(list(candidate_pairs(legs))), 5)
+    def test_both_run_rbi_directions(self):
+        legs = [{'team': 'rays', 'player': name, 'prop': prop}
+                for name in ['Alex', 'Ben'] for prop in ['1+ run', '1+ RBI']]
+        pairs = list(candidate_pairs(legs))
+        self.assertEqual({(a['player'], b['player']) for a, b in pairs}, {('Alex', 'Ben'), ('Ben', 'Alex')})
+        self.assertTrue(all(a['prop'] == '1+ run' and b['prop'] == '1+ RBI' for a, b in pairs))
 
-    def test_opponents_and_unknown_teams_excluded(self):
-        legs = [{'team': 'rays', 'prop': '1+ run'},
-                {'team': 'guardians', 'prop': '1+ RBI'},
-                {'team': '', 'prop': '2+ total bases'}]
+    def test_opponents_unknown_teams_and_other_props_excluded(self):
+        legs = [{'team': 'rays', 'player': 'Alex', 'prop': '1+ run'},
+                {'team': 'guardians', 'player': 'Ben', 'prop': '1+ RBI'},
+                {'team': '', 'player': 'Carl', 'prop': '1+ RBI'},
+                {'team': 'rays', 'player': 'Dan', 'prop': '1+ hit'}]
         self.assertEqual(list(candidate_pairs(legs)), [])
+
+    def test_same_player_suffix_or_accent_excluded(self):
+        for first, second in [('Yandy Díaz', 'Yandy Diaz'), ('Victor Mesa', 'Victor Mesa Jr.')]:
+            legs = [{'team': 'rays', 'player': first, 'prop': '1+ run'},
+                    {'team': 'rays', 'player': second, 'prop': '1+ RBI'}]
+            self.assertEqual(list(candidate_pairs(legs)), [])
 
     def test_market_filter(self):
         market = {'eventId': 100, 'sgmMarket': True, 'marketStatus': 'OPEN',

@@ -74,7 +74,7 @@ class FakeFD:
         for i in range(3):
             markets[f'1.{i}'] = {
                 'eventId': 500, 'sgmMarket': True, 'marketStatus': 'OPEN',
-                'marketType': 'PLAYER_TO_RECORD_A_HIT' if i == 0 else 'TO_RECORD_A_RUN',
+                'marketType': 'TO_RECORD_AN_RBI' if i == 0 else 'TO_RECORD_A_RUN',
                 'runners': [{'selectionId': i+1, 'runnerName': f'visit Player {i}',
                              'secondaryLogo': 'https://assets.sportsbook.fanduel.com/images/team/mlb/tampa_bay_rays.png',
                              'runnerStatus': 'ACTIVE', 'isPlayerSelection': True}]}
@@ -121,7 +121,7 @@ class Workflow(unittest.TestCase):
                     future.result(timeout=5)
                 collector.jobs.clear()
                 manifest = json.loads((Path(directory)/'100/manifest.json').read_text())
-                self.assertEqual(len(manifest['pairs']), 3)
+                self.assertEqual(len(manifest['pairs']), 2)
                 with patch('src.watch.get_json', return_value=boxscore(True)):
                     collector.process_game(game, current)
                 for future in collector.jobs.values():
@@ -138,11 +138,11 @@ class Workflow(unittest.TestCase):
                 for future in collector.jobs.values():
                     future.result(timeout=5)
                 count = len(collector.fd.quoted)
-                self.assertEqual(count, 15)  # three pairs across baseline and four follow-ups
+                self.assertEqual(count, 10)  # two pairs across baseline and four follow-ups
                 # A resumed finished snapshot never duplicates the existing rows or quotes.
                 collector.snapshot(manifest, 'baseline', stamp())
                 self.assertEqual(len(collector.fd.quoted), count)
-                self.assertEqual(export_all(directory), 3)
+                self.assertEqual(export_all(directory), 2)
                 with (Path(directory)/'sgp_price_changes.csv').open() as stream:
                     rows = list(csv.DictReader(stream))
                 self.assertTrue(all(r['odds_before'] == '300.0' and r['odds_after'] == '300.0' for r in rows))
