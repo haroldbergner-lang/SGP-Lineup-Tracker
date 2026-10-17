@@ -75,6 +75,7 @@ def main():
     last_upload = 0.0
     try:
         while datetime.now(timezone.utc) < deadline and not stopping:
+            tick_started = time.monotonic()
             collector.tick()
             if time.monotonic() - last_upload > 300:
                 publish(root)
@@ -83,7 +84,7 @@ def main():
             if collector.schedule and all(datetime.now(timezone.utc) >= dt(g['gameDate'])
                                           for g in collector.schedule) and not collector.jobs:
                 break
-            time.sleep(30)
+            time.sleep(max(.1, collector.poll_interval() - (time.monotonic() - tick_started)))
     finally:
         collector.pool.shutdown(wait=True)
         export_all(root)

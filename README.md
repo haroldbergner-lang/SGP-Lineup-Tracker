@@ -12,7 +12,9 @@ before scheduled first pitch, and collects through the pregame window. Github ca
 delay scheduled starts, so actual per-quote timestamps and missing-stage flags
 remain authoritative. Only October 17 through November 1, 2026 is in scope.
 
-The runner checks MLB lineups approximately every 30 seconds and prices the same
+After baseline collection begins, the runner checks MLB lineups approximately every
+five seconds until both teams' orders are detected, then returns to 30-second checks
+for revisions. RotoWire page checks remain cached for about one minute. It prices the same
 saved run–RBI pairs immediately after each team's lineup detection, ten minutes
 later, and in a final sweep starting five minutes before first pitch. There is no
 projected-order filter. Both player directions remain distinct. A complete sweep
@@ -95,7 +97,8 @@ confirmed status is retained as corroboration. Complete and empty future orders
 were checked live, but the first live empty-to-confirmed transition is still pending.
 Missing projections are never filled using actual lineups. Full-name matching
 normalizes accents, punctuation and suffixes and requires a unique team match.
-Unmatched players get blank derived lineup fields. Later lineup revisions are kept.
+Unmatched players get blank derived lineup fields. Later lineup revisions are kept. Identical MLB responses share one saved source file;
+failed requests never advance the last-observed-unconfirmed timestamp.
 
 Detection time is not publication time. Scheduled first pitch may change; schedule
 refreshes occur every 15 minutes. Missing baselines, already-confirmed lineups,
