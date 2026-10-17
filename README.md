@@ -9,6 +9,8 @@ On October 16, 2026, the collector found 72 eligible selections for FanDuel even
 36196493 (Rays–Guardians) and saved 10/10 verified two-leg SGP quotes to CSV.
 These are actual FanDuel combined prices, not multiplied individual odds.
 Comparison against prices displayed in the website remains pending.
+The automated multi-snapshot workflow below is implemented and locally configured;
+its first live lineup-transition capture is still pending.
 
 The old scraper omitted the `X-Application` frontend-key header and the website's
 `scope=PREVIEW&pricePolicy=SUGGESTED` parameters. Without the header the endpoint
@@ -62,19 +64,6 @@ gamePk mapping exists. Missing player IDs remain blank; selection IDs are stored
 separately and are not asserted to be MLB player IDs. The `quote_id` is FanDuel's
 betReference when present; it is not a stable cross-snapshot identifier.
 
-## Incremental plan
-
-1. Expand the successful live quote batch and compare prices to the FanDuel UI.
-2. Add projected and confirmed batting orders, source IDs and retrieval times.
-   RotoWire has a documented expected/confirmed MLB lineup feed; credentials,
-   cost and payload status fields need verification. Evaluate MLB Stats API for
-   confirmed orders. Leave unavailable publication timestamps blank.
-3. Requote a saved combination manifest with exact IDs, record missing selections,
-   and produce `sgp_price_changes.csv` and `lineup_changes.csv`.
-4. Only then add scheduling and announcement detection. Capture team announcements
-   separately; 2 PM ET is a configurable future baseline, not a guarantee that
-   every game is pre-announcement.
-
 ## Source reuse
 
 The event-page retrieval and `implyBets` request construction adapt
@@ -82,3 +71,90 @@ The event-page retrieval and `implyBets` request construction adapt
 NBA/Kalshi matching, trading logic, fuzzy thresholds and the ordinary-multiple
 fallback were omitted. Unit-test quote responses are synthetic fixtures, not
 collected odds or evidence that live pricing works.
+
+## Automated postseason collection
+
+The persistent collector covers games from October 17 onward, excluding October 16.
+It refreshes MLB's schedule every 15 minutes, includes ALCS and World Series games
+that are actually scheduled, and skips cancelled/postponed games. Conditional games
+remain candidates until MLB updates their status. Team matching requires both full
+team names and a unique FanDuel event within three hours of scheduled first pitch.
+
+Create a private local configuration by copying `collector.example.json` to
+`collector.local.json`, fill in your existing scraper's frontend key, and run:
+
+```sh
+python3 -m src.watch --config collector.local.json --once   # schedule preflight
+python3 -m src.watch --config collector.local.json --ensure # start only if absent
+```
+
+The running collector is protected by a process lock, resumes completed quote rows
+without duplicating them, and stops after the configured collection window. The
+local config and data are ignored by Git. `--ensure` starts a detached process;
+it does not install a system service. A Codex chat heartbeat can supervise it and
+restart it after a crash. The Mac must remain on, awake and online; scheduled Codex
+supervision additionally requires the desktop app to remain running. A shutdown,
+sleep, source failure or network restriction can cause missed collection windows.
+
+### Per-game timing
+
+- **Baseline:** starts five hours before scheduled first pitch. Save RotoWire's
+  then-current *expected* orders and enumerate all unordered pairs from the four
+  eligible FanDuel market types. Preserve the manifest unchanged afterward.
+- **Immediate:** check MLB every approximately 30 seconds during the collection
+  window; when a complete nine-player battingOrder first appears for either team,
+  start requoting that exact manifest. Capture both teams' announcements separately.
+- **Ten minutes:** another sweep becomes due ten minutes after each team's first
+  detected order, regardless of whether the earlier sweep has finished.
+- **Pregame:** start a final sweep shortly before scheduled first pitch. Its lead
+  is the larger of five minutes or the estimated full-batch duration plus 90 seconds.
+  At 2,556 pairs and four starts per second this is about twelve minutes. This is
+  a sweep, not one simultaneous instant. Overlapping jobs or network delays can
+  extend it; no new requests start at/after scheduled first pitch.
+
+Quote requests share a four-per-second start limit and four in-flight limit across
+all batches. HTTP access/throttling/service errors back off for five minutes.
+This conservative initial rate has not been load-tested across a full game universe.
+Each row has its own request/response time; completed responses arriving at or
+beyond scheduled start are flagged and excluded from verified pregame prices.
+A weather delay may change the schedule; MLB's refreshed scheduled time is recorded,
+but this collector does not infer a new actual first pitch from a delay announcement.
+
+### Lineup sources and identity
+
+Expected orders come from the publicly accessible RotoWire daily-lineups page, not
+its paid API. The parser requires an explicit expected status, the matching date,
+and nine distinct players. It was checked against tomorrow's projected orders and
+today's confirmed orders. Unavailable projections remain missing, rather than being
+filled with a confirmed lineup. Actual orders come from MLB's pregame boxscore
+`battingOrder`, with MLB player IDs; RotoWire confirmed status is retained as
+corroboration when it agrees. Today's MLB feed had nine players per side while
+tomorrow's had no published orders. This behavior still needs observation during
+an actual transition tomorrow. Detection times are not publication times.
+
+Full-name matching normalizes accents, punctuation and common suffixes, never uses
+surname-only or closest-threshold matching, and requires a unique team match.
+Unmatched/ambiguous players have blank derived lineup fields. Known complete
+lineups can establish that a matched player did not start; missing lineups cannot.
+Later MLB lineup revisions are retained, with the latest order in the combined CSV.
+
+### Final CSVs
+
+`data/season-2026/sgp_price_changes.csv` combines all collected games, one row per
+manifest pair. It includes before/after prices, each leg's projected/actual batting
+position and starter status, both full projected/actual orders as JSON inside CSV
+cells, source/timing fields, availability and all intermediate snapshots.
+
+The primary `odds_after` is the sweep due ten minutes after the **second** team's
+lineup detection. Separate columns preserve immediate and ten-minute prices for
+each team and the final pregame sweep. `probability_change` is in percentage points;
+probability columns are fractions. A missing or unsupported quote stays blank with
+its status. `baseline_already_confirmed` and timing checks identify compromised
+baselines; a price comparison is not proof of a lineup effect.
+
+`lineup_changes.csv` contains one row per player appearing in either source order,
+including players with no available prop. Original manifests, source pages,
+boxscores, per-stage CSVs and per-quote responses remain locally available.
+
+The separate health file records heartbeat time and errors. CSVs are rebuilt
+atomically as data arrives; they are incomplete until the relevant games finish.

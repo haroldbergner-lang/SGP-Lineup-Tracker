@@ -44,6 +44,11 @@ class Quotes(unittest.TestCase):
         data = {'respCode': 'SUCCESS', 'betFailures': [{'failureCode': 'INVALID_COMBINATION'}]}
         self.assertEqual(parse_quote(data, PAIR)['failure_codes'], 'INVALID_COMBINATION')
 
+    def test_live_response_rejected(self):
+        data = response()
+        data['runnerOdds'] = [{'inplay': True}]
+        self.assertEqual(parse_quote(data, PAIR)['status'], 'in_play')
+
     def test_request_exact_ids(self):
         self.assertEqual(quote_body(PAIR)['betLegs'][1]['betRunners'][0]['runner'],
                          {'marketId': '1.2', 'selectionId': 20})

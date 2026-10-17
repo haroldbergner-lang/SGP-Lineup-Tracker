@@ -61,6 +61,9 @@ def parse_quote(data, pair):
         raise ValueError('Exactly two distinct selections are required')
     if data.get('respCode') != 'SUCCESS':
         return {'status': 'response_error'}
+    if any(r.get('inplay') is True for key in ('runnerOdds', 'winRunnerOdds')
+           for r in data.get(key, [])):
+        return {'status': 'in_play'}
     for combo in data.get('betCombinations', []):
         if combo.get('isSGM') is not True or combo.get('betType') != 'DOUBLE':
             continue
