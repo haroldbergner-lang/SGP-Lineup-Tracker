@@ -16,6 +16,7 @@ import time
 from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 
+from .latency import ranked_pairs, REPEAT_OFFSETS
 from .combinations import candidate_pairs
 from .fanduel import FanDuel, parse_quote, quote_body, selections
 from .lineups import fetch, get_json, normalize_name, official_order, parse_rotowire
@@ -95,6 +96,7 @@ class Collector:
         self.rate = RateLimit()
         self.pool = ThreadPoolExecutor(max_workers=6)
         self.jobs = {}
+        self.refresh_jobs = {}
         self.last_schedule = 0
         self.schedule = []
         self.last_lineups = {}
@@ -178,6 +180,8 @@ class Collector:
         pairs = [pair for pair in manifest['pairs']
                  if pair_id(manifest['fd_event_id'], pair) not in completed]
         cutoff = dt(manifest['scheduled_start'])
+        if '_latency_' in stage:
+            cutoff = min(cutoff, dt(due) + timedelta(seconds=10))
         with path.open('a', newline='', encoding='utf-8') as stream:
             writer = csv.DictWriter(stream, fieldnames=QUOTE_FIELDS)
             if stream.tell() == 0:
@@ -186,17 +190,52 @@ class Collector:
                 futures = [pool.submit(self.quote_one, manifest, stage, due, pair, directory, cutoff)
                            for pair in pairs]
                 for future in as_completed(futures):
-                    writer.writerow(future.result())
+                    result = future.result()
+                    if '_latency_' in stage:
+                        result['status'] = {'skipped_at_start': 'sampling_window_missed',
+                                            'response_at_or_after_start': 'response_after_sampling_window'}.get(
+                                                result.get('status'), result.get('status'))
+                    writer.writerow(result)
                     stream.flush()
         save(directory / 'done.json', {'completed_at': stamp(), 'stage': stage})
         return stage
 
-    def launch(self, manifest, state, stage, due):
+    def launch(self, manifest, state, stage, due, pairs=None):
         key = (manifest['game_id'], stage)
         done = self.root / str(manifest['game_id']) / 'snapshots' / stage / 'done.json'
         if key not in self.jobs and not done.exists():
             state.setdefault('stages', {})[stage] = {'due': due, 'started_at': stamp()}
-            self.jobs[key] = self.pool.submit(self.snapshot, manifest.copy(), stage, due)
+            snapshot_manifest = manifest.copy()
+            if pairs is not None:
+                snapshot_manifest['pairs'] = pairs
+            self.jobs[key] = self.pool.submit(self.snapshot, snapshot_manifest, stage, due)
+
+    def refresh_markets(self, manifest, side, detected):
+        """Separate post-announcement universe; never fabricate baseline prices."""
+        directory = self.root / str(manifest['game_id']) / 'market_refresh' / side
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / 'manifest.json'
+        if path.exists():
+            supplemental = json.loads(path.read_text())
+        else:
+            markets = self.fd.markets(manifest['fd_event_id'])
+            legs = selections(markets, manifest['fd_event_id'])
+            baseline_ids = {pair_id(manifest['fd_event_id'], pair) for pair in manifest['pairs']}
+            pairs = [pair for pair in candidate_pairs(legs)
+                     if pair_id(manifest['fd_event_id'], pair) not in baseline_ids]
+            supplemental = {**manifest, 'pairs': pairs, 'selections': legs,
+                            'discovered_at': stamp(), 'lineup_detected_at': detected,
+                            'cohort': 'post_announcement_only', 'baseline_available': False}
+            save(directory / 'markets.json', markets)
+            save(path, supplemental)
+        # An empty universe is still evidence of a completed discovery attempt.
+        save(directory / 'done.json', {'completed_at': stamp()})
+
+    def launch_refresh(self, manifest, side, detected):
+        key = (manifest['game_id'], side)
+        done = self.root / str(manifest['game_id']) / 'market_refresh' / side / 'done.json'
+        if key not in self.refresh_jobs and not done.exists():
+            self.refresh_jobs[key] = self.pool.submit(self.refresh_markets, manifest.copy(), side, detected)
 
     def initialize(self, game, orders, retrieved, source):
         directory = self.root / str(game['gamePk'])
@@ -300,7 +339,37 @@ class Collector:
             confirmed = state['confirmed'].get(side)
             if confirmed:
                 detected = dt(confirmed['detected_at'])
-                self.launch(manifest, state, side + '_immediate', detected.isoformat())
+                ordered, priority = ranked_pairs(manifest, state, side)
+                self.launch(manifest, state, side + '_immediate', detected.isoformat(), ordered)
+                # Use actual wall time, not tick entry time, for short sampling windows.
+                now = datetime.now(UTC)
+                confirmed.setdefault('latency_sampling', {
+                    'selected_combination_ids': [pair_id(manifest['fd_event_id'], pair) for pair in priority],
+                    'offsets_seconds': list(REPEAT_OFFSETS),
+                    'first_sweep_order': 'changed_players_first'})
+                selected_ids = set(confirmed['latency_sampling']['selected_combination_ids'])
+                priority = [pair for pair in manifest['pairs']
+                            if pair_id(manifest['fd_event_id'], pair) in selected_ids]
+                # Retain ranking within the frozen sample set.
+                priority.sort(key=lambda pair: confirmed['latency_sampling']['selected_combination_ids'].index(
+                    pair_id(manifest['fd_event_id'], pair)))
+                for offset in REPEAT_OFFSETS:
+                    due_repeat = detected + timedelta(seconds=offset)
+                    stage = side + '_latency_' + str(offset) + 's'
+                    if priority and due_repeat <= now < due_repeat + timedelta(seconds=10):
+                        self.launch(manifest, state, stage, due_repeat.isoformat(), priority)
+                    elif priority and now >= due_repeat + timedelta(seconds=10):
+                        state.setdefault('stages', {}).setdefault(stage, {
+                            'due': due_repeat.isoformat(), 'status': 'sampling_window_missed'})
+                # Discovery runs off-thread, after the immediate batch is submitted.
+                self.launch_refresh(manifest, side, detected.isoformat())
+                supplemental_path = directory / 'market_refresh' / side / 'manifest.json'
+                if now >= detected + timedelta(seconds=70) and supplemental_path.exists():
+                    supplemental = json.loads(supplemental_path.read_text())
+                    supplemental['scheduled_start'] = manifest['scheduled_start']
+                    if supplemental['pairs']:
+                        self.launch(supplemental, state, side + '_new_markets',
+                                    supplemental['discovered_at'])
                 due = detected + timedelta(minutes=10)
                 if current >= due:
                     self.launch(manifest, state, side + '_plus10', due.isoformat())
@@ -324,6 +393,10 @@ class Collector:
                 state = json.loads(path.read_text()) if path.exists() else {}
                 if not all(side in state.get('confirmed', {}) for side in ('away', 'home')):
                     return 5
+                if any(c.get('detected_at') and
+                       0 <= (current - dt(c['detected_at'])).total_seconds() < 70
+                       for c in state.get('confirmed', {}).values()):
+                    return 5
         return 30
 
     def tick(self):
@@ -335,6 +408,13 @@ class Collector:
                 self.process_game(game, current)
             except Exception as error:
                 self.error('game_' + str(game['gamePk']), error)
+        for key, future in list(self.refresh_jobs.items()):
+            if future.done():
+                try:
+                    future.result()
+                except Exception as error:
+                    self.error('market_refresh_' + key[1], error)
+                del self.refresh_jobs[key]
         for key, future in list(self.jobs.items()):
             if future.done():
                 try:
@@ -342,7 +422,7 @@ class Collector:
                 except Exception as error:
                     self.error('snapshot_' + key[1], error)
                 del self.jobs[key]
-        self.health.update(heartbeat_at=stamp(), running_batches=len(self.jobs),
+        self.health.update(heartbeat_at=stamp(), running_batches=len(self.jobs), market_refresh_jobs=len(self.refresh_jobs),
                            poll_interval_seconds=self.poll_interval(),
                            scheduled_games=len(self.schedule), next_games=[
                                {'game_id': g['gamePk'], 'start': g['gameDate']} for g in self.schedule

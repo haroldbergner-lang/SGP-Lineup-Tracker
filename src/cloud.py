@@ -1,5 +1,6 @@
 """GitHub-hosted, bounded collection with encrypted checkpoint recovery."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -73,19 +74,34 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     last_upload = 0.0
+    uploads = ThreadPoolExecutor(max_workers=1)
+    checkpoint = None
     try:
         while datetime.now(timezone.utc) < deadline and not stopping:
             tick_started = time.monotonic()
             collector.tick()
-            if time.monotonic() - last_upload > 300:
-                publish(root)
+            if checkpoint is not None and checkpoint.done():
+                try:
+                    checkpoint.result()
+                except Exception as error:
+                    collector.error('cloud_checkpoint', error)
+                checkpoint = None
+            if checkpoint is None and time.monotonic() - last_upload > 300:
+                # Archive uploads must not block lineup polling or repeat scheduling.
+                checkpoint = uploads.submit(publish, root)
                 last_upload = time.monotonic()
             # Once the refreshed scheduled start passes, finish all pending writes.
             if collector.schedule and all(datetime.now(timezone.utc) >= dt(g['gameDate'])
-                                          for g in collector.schedule) and not collector.jobs:
+                                          for g in collector.schedule) and not collector.jobs and not collector.refresh_jobs:
                 break
             time.sleep(max(.1, collector.poll_interval() - (time.monotonic() - tick_started)))
     finally:
+        uploads.shutdown(wait=True)
+        if checkpoint is not None:
+            try:
+                checkpoint.result()
+            except Exception as error:
+                collector.error('cloud_checkpoint', error)
         collector.pool.shutdown(wait=True)
         export_all(root)
         save(root/'cloud-run.json', {'finished_at': stamp(), 'game_ids': sorted(ids),

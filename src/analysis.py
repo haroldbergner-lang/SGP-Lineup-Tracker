@@ -2,6 +2,8 @@
 import csv
 import json
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+from .latency import REPEAT_OFFSETS
 
 from .lineups import normalize_name
 
@@ -63,7 +65,7 @@ def player_fields(leg, state):
 
 def export_all(root):
     root = Path(root)
-    rows, lineup_rows = [], []
+    rows, lineup_rows, latency_rows, added_rows = [], [], [], []
     for path in sorted(root.glob('*/manifest.json')):
         manifest = json.loads(path.read_text())
         state = json.loads((path.parent / 'state.json').read_text())
@@ -126,6 +128,40 @@ def export_all(root):
                 for key in ('odds', 'probability', 'status', 'requested_due', 'request_timestamp', 'response_timestamp', 'raw_file'):
                     row[stage + '_' + key] = quote.get(key, 'pending' if key == 'status' else '')
             rows.append(row)
+        # Long-form repeat samples and later-added markets retain their own cohorts.
+        baseline_pairs = {eid + ':' + '|'.join(sorted(s['market_id'] + ':' + s['selection_id']
+                          for s in pair)): pair for pair in manifest['pairs']}
+        for side, confirmation in confirmations.items():
+            plan = confirmation.get('latency_sampling', {})
+            for offset in REPEAT_OFFSETS:
+                stage = side + '_latency_' + str(offset) + 's'
+                quotes = read_rows(path.parent / 'snapshots' / stage / 'quotes.csv')
+                due = datetime.fromisoformat(confirmation['detected_at']) + timedelta(seconds=offset)
+                fallback = ('sampling_window_missed' if datetime.now(timezone.utc) >= due + timedelta(seconds=10)
+                            else 'pending')
+                for cid in plan.get('selected_combination_ids', []):
+                    pair = baseline_pairs.get(cid)
+                    if pair:
+                        quote = quotes.get(cid, {'combination_id': cid, 'stage': stage,
+                                                'requested_due': due.isoformat(), 'status': fallback})
+                        latency_rows.append({'game_id': manifest['game_id'], 'stage': stage,
+                            'lineup_detected_at': confirmation['detected_at'],
+                            'player_1': pair[0]['player'], 'prop_1': pair[0]['prop'],
+                            'player_2': pair[1]['player'], 'prop_2': pair[1]['prop'], **quote})
+        for refresh in sorted((path.parent / 'market_refresh').glob('*/manifest.json')):
+            extra = json.loads(refresh.read_text())
+            side = refresh.parent.name
+            quotes = read_rows(path.parent / 'snapshots' / (side + '_new_markets') / 'quotes.csv')
+            for pair in extra['pairs']:
+                cid = eid + ':' + '|'.join(sorted(s['market_id'] + ':' + s['selection_id'] for s in pair))
+                quote = quotes.get(cid, {})
+                added_rows.append({'game_id': manifest['game_id'], 'discovery_side': side,
+                    'cohort': 'post_announcement_only', 'baseline_available': False,
+                    'discovered_at': extra['discovered_at'],
+                    'lineup_detected_at': extra['lineup_detected_at'],
+                    'combination_id': cid, 'player_1': pair[0]['player'], 'prop_1': pair[0]['prop'],
+                    'player_2': pair[1]['player'], 'prop_2': pair[1]['prop'],
+                    'status': quote.get('status', 'pending'), **quote})
         # Include every player in either full order, even if absent from prop markets.
         for side in ('away', 'home'):
             players = state.get('projected', {}).get(side, {}).get('players', []) + confirmations.get(side, {}).get('players', [])
@@ -139,4 +175,6 @@ def export_all(root):
                                     'lineup_detected_at': confirmations.get(side, {}).get('detected_at', '')})
     write_csv(root / 'sgp_price_changes.csv', rows)
     write_csv(root / 'lineup_changes.csv', lineup_rows)
+    write_csv(root / 'latency_quotes.csv', latency_rows)
+    write_csv(root / 'additional_sgp_quotes.csv', added_rows)
     return len(rows)

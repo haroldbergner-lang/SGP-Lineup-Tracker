@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 import tarfile
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +41,40 @@ class Cloud(unittest.TestCase):
                 corrupted[-1] ^= 1
                 with self.assertRaises(ValueError):
                     restore(bytes(corrupted), Path(directory)/'bad')
+
+    def test_checkpoint_upload_does_not_block_next_collector_tick(self):
+        from src import cloud
+        entered, release = threading.Event(), threading.Event()
+        now = datetime(2026, 10, 18, 16, tzinfo=timezone.utc)
+        game = {'gamePk': 100, 'gameDate': (now+timedelta(hours=4)).isoformat(),
+                'status': {'detailedState': 'Scheduled'}}
+        ticks = []
+        worker = ThreadPoolExecutor(max_workers=1)
+        collector = SimpleNamespace(schedule=[game], jobs={}, refresh_jobs={}, pool=worker)
+        collector.refresh_schedule = lambda: None
+        collector.poll_interval = lambda: 5
+        collector.error = lambda *args: self.fail('Unexpected upload failure')
+        def tick():
+            ticks.append(1)
+            if len(ticks) == 2:
+                self.assertTrue(entered.wait(timeout=2))
+                release.set()
+                game['gameDate'] = (now-timedelta(seconds=1)).isoformat()
+        collector.tick = tick
+        def publish(root):
+            entered.set()
+            if not release.wait(timeout=3):
+                raise AssertionError('Upload blocked the polling loop')
+        with tempfile.TemporaryDirectory() as d, \
+             patch.object(cloud, 'Collector', return_value=collector), \
+             patch.object(cloud, 'download', return_value=Path(d)), \
+             patch.object(cloud, 'publish', side_effect=publish), \
+             patch.object(cloud, 'export_all'), patch.object(cloud.time, 'sleep'), \
+             patch.object(cloud, 'datetime') as clock, \
+             patch.dict(os.environ, {'FD_API_KEY': 'test'}), patch('sys.argv', ['cloud']):
+            clock.now.return_value = now
+            self.assertEqual(cloud.main(), 0)
+        self.assertEqual(len(ticks), 2)
 
     def test_wrong_password_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
