@@ -120,3 +120,41 @@ or proof that a lineup announcement caused the movement.
 including players without available props. FanDuel event and selection IDs are
 stored separately from MLB game and player IDs. The quote reference is not a stable
 cross-snapshot identity. Raw evidence remains inside the encrypted archive.
+
+### First-minute lineup latency sampling
+
+After an official MLB order is detected, the immediate sweep now quotes saved
+pairs involving changed starters or batting positions first. A newly included or
+removed starter receives priority 100 per leg; a moved batter receives 10 per
+batting position changed. Ties retain the original randomized order. All saved
+pairs still get their immediate, ten-minute and pregame snapshots. When no
+projection is available, the collector does not invent lineup changes or a
+priority sample.
+
+Up to eight highest-priority pairs are sampled again at target offsets of
+10, 20, 30, 40, 50 and 60 seconds after detection. All requests share the existing
+four-starts-per-second, four-concurrent-request limit, so these are targets rather
+than exact execution guarantees. Extra samples can lengthen the full sweep.
+Requests expire ten seconds after their target; missed or late samples are
+explicitly flagged, and per-quote times are authoritative. Polling remains at
+five seconds through this sampling window. `latency_quotes.csv` contains one row
+per selected pair and repeat offset, including pending/missed samples. The
+original immediate quote is never overwritten. Restarting resumes saved rows.
+
+A separate asynchronous market refresh follows each team's initial detection.
+It compares current eligible selections with the immutable baseline pair IDs.
+New combinations are frozen in a separate manifest and quoted after the first
+70 seconds, keeping discovery off the immediate quote path and avoiding added
+quote traffic in the first-minute sampling window. They appear in
+`additional_sgp_quotes.csv` with `baseline_available=False`; they are never
+inserted into the matched before/after CSV. This is a one-time refresh per team,
+not continuous discovery of later additions.
+
+Cloud checkpoint uploads also run separately from lineup polling. Uploads remain
+serialized and finish before the final checkpoint. This prevents a growing
+archive from pausing announcement detection while it is being uploaded.
+
+These changes measure latency **relative to MLB detection**, not the team's
+original announcement. No independent team-announcement feed or publication
+timestamp is supplied by this implementation. Prices remain research quotes;
+acceptance of a wager is not tested.
