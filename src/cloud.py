@@ -73,7 +73,7 @@ def main():
         stopping = True
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    last_upload = 0.0
+    last_upload = float('-inf')
     uploads = ThreadPoolExecutor(max_workers=1)
     checkpoint = None
     try:
