@@ -124,16 +124,21 @@ cross-snapshot identity. Raw evidence remains inside the encrypted archive.
 ### First-minute lineup latency sampling
 
 After an official MLB order is detected, the immediate sweep now quotes saved
-pairs involving changed starters or batting positions first. A newly included or
-removed starter receives priority 100 per leg; a moved batter receives 10 per
-batting position changed. Ties retain the original randomized order. All saved
+pairs involving changed starters or batting positions first. The sample favors
+confirmed starters, run scorers batting ahead of RBI batters, and a mix of
+scorers and RBI batters. No scorer occupies more than two sample slots and no
+RBI batter more than three. Scores use only lineup information, not observed
+price moves. Selected sample pairs lead the immediate sweep; other changed
+pairs follow, and nonstarters are deprioritized. Ties retain the original randomized order. All saved
 pairs still get their immediate, ten-minute and pregame snapshots. When no
 projection is available, the collector does not invent lineup changes or a
 priority sample.
 
-Up to eight highest-priority pairs are sampled again at target offsets of
+Up to twelve selected pairs are sampled again at target offsets of
 10, 20, 30, 40, 50 and 60 seconds after detection. All requests share the existing
-four-starts-per-second, four-concurrent-request limit, so these are targets rather
+four-starts-per-second, four-concurrent-request limit. A shared admission queue
+gives repeat samples priority over queued full-sweep requests, with rolling
+requests last. In-flight requests cannot be preempted, so these are targets rather
 than exact execution guarantees. Extra samples can lengthen the full sweep.
 Requests expire ten seconds after their target; missed or late samples are
 explicitly flagged, and per-quote times are authoritative. Polling remains at
@@ -158,3 +163,18 @@ These changes measure latency **relative to MLB detection**, not the team's
 original announcement. No independent team-announcement feed or publication
 timestamp is supplied by this implementation. Prices remain research quotes;
 acceptance of a wager is not tested.
+
+### Rolling pre-announcement snapshots
+
+While either team's order is unconfirmed, collect the same baseline combinations
+at five-minute target intervals after baseline observation. Skip obsolete
+intervals after downtime; never replay a backlog as if it were historical data.
+Only one rolling sweep per game can run at once, and no new rolling sweep is
+launched during the first 70 seconds after either detection. Already-running
+rolling work yields request admission to announcement snapshots and repeat
+samples. `rolling_quotes.csv` preserves every captured quote's target and actual
+request/response times and flags whether it preceded each detected announcement.
+A rolling sweep can straddle an announcement: only individual quotes with earlier
+timestamps qualify as pre-detection observations. Detection still is not publication.
+The baseline and the main matched before/after output stay unchanged. Rolling
+snapshots add request volume, but never increase the four-starts-per-second cap.

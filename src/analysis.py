@@ -65,7 +65,7 @@ def player_fields(leg, state):
 
 def export_all(root):
     root = Path(root)
-    rows, lineup_rows, latency_rows, added_rows = [], [], [], []
+    rows, lineup_rows, latency_rows, added_rows, rolling_rows = [], [], [], [], []
     for path in sorted(root.glob('*/manifest.json')):
         manifest = json.loads(path.read_text())
         state = json.loads((path.parent / 'state.json').read_text())
@@ -131,6 +131,15 @@ def export_all(root):
         # Long-form repeat samples and later-added markets retain their own cohorts.
         baseline_pairs = {eid + ':' + '|'.join(sorted(s['market_id'] + ':' + s['selection_id']
                           for s in pair)): pair for pair in manifest['pairs']}
+        for quotes_path in sorted((path.parent / 'snapshots').glob('rolling_*/quotes.csv')):
+            for cid, quote in read_rows(quotes_path).items():
+                pair = baseline_pairs.get(cid)
+                if pair:
+                    flags = {f'before_{side}_detection': (quote.get('response_timestamp', 'z') < c['detected_at'])
+                             for side, c in confirmations.items()}
+                    rolling_rows.append({'game_id': manifest['game_id'],
+                        'player_1': pair[0]['player'], 'prop_1': pair[0]['prop'],
+                        'player_2': pair[1]['player'], 'prop_2': pair[1]['prop'], **quote, **flags})
         for side, confirmation in confirmations.items():
             plan = confirmation.get('latency_sampling', {})
             for offset in REPEAT_OFFSETS:
@@ -177,4 +186,5 @@ def export_all(root):
     write_csv(root / 'lineup_changes.csv', lineup_rows)
     write_csv(root / 'latency_quotes.csv', latency_rows)
     write_csv(root / 'additional_sgp_quotes.csv', added_rows)
+    write_csv(root / 'rolling_quotes.csv', rolling_rows)
     return len(rows)

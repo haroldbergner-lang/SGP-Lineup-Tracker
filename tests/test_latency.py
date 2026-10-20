@@ -32,7 +32,8 @@ class Latency(unittest.TestCase):
                     {'name': 'Other', 'position': 2}, {'name': 'New Starter', 'position': 3}]}}}
         ordered, priority = ranked_pairs(manifest, state, 'away')
         self.assertEqual(ordered[-1], stable)
-        self.assertEqual(len(priority), REPEAT_PAIR_LIMIT)
+        self.assertLessEqual(len(priority), REPEAT_PAIR_LIMIT)
+        self.assertEqual(len(priority), 2)  # one scorer cannot occupy the whole sample
         self.assertEqual(len(ordered), len(manifest['pairs']))
         self.assertEqual(manifest['pairs'][0], stable)  # baseline never mutated
         self.assertEqual(ranked_pairs(manifest, {}, 'away'), (manifest['pairs'], []))
@@ -41,7 +42,7 @@ class Latency(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             c = Collector({'output': d, 'frontend_key': 'test'})
             c.fd = FakeFD(stamp())
-            c.rate.wait = lambda: None
+            c.rate.interval = 0
             pair = [leg('A', 1), leg('B', 2, '1+ RBI')]
             manifest = {'game_id': 1, 'fd_event_id': '500', 'pairs': [pair],
                         'scheduled_start': (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()}
@@ -98,7 +99,7 @@ class Latency(unittest.TestCase):
     def test_added_markets_export_separately_and_resume_without_duplicates(self):
         with tempfile.TemporaryDirectory() as d:
             c = Collector({'output':d,'frontend_key':'test'})
-            c.rate.wait=lambda:None
+            c.rate.interval=0
             start=(datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()
             c.fd=FakeFD(start)
             baseline=list(candidate_pairs(selections(c.fd.markets('500'),'500')))[0]

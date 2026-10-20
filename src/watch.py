@@ -1,5 +1,6 @@
 """Persistent, local postseason collector. See README for timing and limitations."""
 import argparse
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 from datetime import datetime, timedelta, timezone
@@ -41,23 +42,55 @@ def save(path, value):
 
 
 class RateLimit:
-    """One start every quarter second, shared across all snapshot batches."""
+    """Priority admission, four active requests, at least .25s between starts."""
     def __init__(self):
-        self.lock = threading.Lock()
+        self.condition = threading.Condition()
         self.next_start = 0.0
         self.stop_until = 0.0
-        self.concurrent = threading.Semaphore(4)
+        self.active = 0
+        self.sequence = 0
+        self.waiters = []
+        self.interval = .25
 
-    def wait(self):
-        with self.lock:
-            delay = max(self.next_start, self.stop_until) - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            self.next_start = time.monotonic() + .25
+    @contextmanager
+    def slot(self, priority=1, cutoff=None):
+        admitted = False
+        with self.condition:
+            ticket = (priority, self.sequence)
+            self.sequence += 1
+            self.waiters.append(ticket)
+            self.condition.notify_all()
+            while True:
+                if cutoff is not None and datetime.now(UTC) >= cutoff:
+                    self.waiters.remove(ticket)
+                    self.condition.notify_all()
+                    break
+                now = time.monotonic()
+                delay = max(self.next_start, self.stop_until) - now
+                if ticket == min(self.waiters) and self.active < 4 and delay <= 0:
+                    self.waiters.remove(ticket)
+                    self.active += 1
+                    self.next_start = now + self.interval
+                    admitted = True
+                    self.condition.notify_all()
+                    break
+                # Wake for deadlines even if all active requests are slow.
+                timeout = .1 if cutoff is not None else None
+                if ticket == min(self.waiters) and self.active < 4:
+                    timeout = max(.001, delay) if timeout is None else min(timeout, max(.001, delay))
+                self.condition.wait(timeout=timeout)
+        try:
+            yield admitted
+        finally:
+            if admitted:
+                with self.condition:
+                    self.active -= 1
+                    self.condition.notify_all()
 
     def backoff(self):
-        with self.lock:
+        with self.condition:
             self.stop_until = time.monotonic() + 300
+            self.condition.notify_all()
 
 
 def pair_id(event_id, pair):
@@ -145,10 +178,10 @@ class Collector:
                'request_timestamp': stamp()}
         if datetime.now(UTC) >= cutoff:
             return {**row, 'response_timestamp': stamp(), 'status': 'skipped_at_start'}
-        with self.rate.concurrent:
-            self.rate.wait()
+        priority = 0 if '_latency_' in stage else (2 if stage.startswith('rolling_') else 1)
+        with self.rate.slot(priority, cutoff) as admitted:
             row['request_timestamp'] = stamp()
-            if datetime.now(UTC) >= cutoff:
+            if not admitted or datetime.now(UTC) >= cutoff:
                 return {**row, 'response_timestamp': stamp(), 'status': 'skipped_at_start'}
             try:
                 response = self.fd.quote(pair)
@@ -373,6 +406,20 @@ class Collector:
                 due = detected + timedelta(minutes=10)
                 if current >= due:
                     self.launch(manifest, state, side + '_plus10', due.isoformat())
+        # Rolling quotes retain per-quote timestamps; a sweep can straddle detection.
+        interval = self.config.get('rolling_interval_seconds', 300)
+        if interval > 0 and len(state['confirmed']) < 2:
+            observed = dt(state['baseline_observed_at'])
+            elapsed = (datetime.now(UTC) - observed).total_seconds()
+            slot = int(elapsed // interval)
+            in_burst = any(0 <= (datetime.now(UTC) - dt(c['detected_at'])).total_seconds() < 70
+                           for c in state['confirmed'].values())
+            rolling_active = any(gid == manifest['game_id'] and stage.startswith('rolling_')
+                                 and not future.done() for (gid, stage), future in self.jobs.items())
+            if slot >= 1 and not in_burst and not rolling_active:
+                due_rolling = observed + timedelta(seconds=slot * interval)
+                stage = 'rolling_' + due_rolling.strftime('%Y%m%dT%H%M%S')
+                self.launch(manifest, state, stage, due_rolling.isoformat())
         # Start the final sweep early enough for the full universe at four requests/sec.
         lead = max(300, len(manifest['pairs']) * .25 + 90)
         due = start - timedelta(seconds=lead)
