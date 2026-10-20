@@ -109,7 +109,7 @@ class Workflow(unittest.TestCase):
                       'start_date': '2026-10-17', 'end_date': '2026-11-01'}
             collector = Collector(config)
             collector.fd = FakeFD(start)
-            collector.rate.wait = lambda: None
+            collector.rate.interval = 0
             game = {'gamePk': 100, 'gameDate': start, 'status': {'detailedState': 'Scheduled'},
                     'teams': {s: {'team': {'name': name, 'abbreviation': abbr}} for s, name, abbr in
                               [('away', 'Tampa Bay Rays', 'TB'), ('home', 'Cleveland Guardians', 'CLE')]}}
